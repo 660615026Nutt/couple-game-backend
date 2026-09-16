@@ -7,15 +7,10 @@ const app = express();
 app.use(cors());
 const server = http.createServer(app);
 
-// ตั้งค่า Socket.IO ให้ยอมรับการเชื่อมต่อจาก React (ที่มักจะรันบนพอร์ต 5173)
-const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
-});
-
-// เก็บข้อมูลห้องเกมทั้งหมด
+const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 const rooms = {};
 
-// ฟังก์ชันสับไพ่
+// สับไพ่
 const shuffleArray = (array) => {
   let shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -25,65 +20,72 @@ const shuffleArray = (array) => {
   return shuffled;
 };
 
-// ฟังก์ชันเริ่มเกมและแจกไพ่
-const setupGame = (roomId) => {
+// --- ลอจิกเกม ดงระเบิด ---
+const setupBombGame = (roomId) => {
   let baseCards = [];
   for (let i = 0; i < 6; i++) baseCards.push({ type: 'skip', name: '⏭️ ชิ่งหนี' });
   for (let i = 0; i < 6; i++) baseCards.push({ type: 'attack', name: '⚔️ โจมตี' });
   for (let i = 0; i < 4; i++) baseCards.push({ type: 'see', name: '👁️ แอบดูกอง' });
-  for (let i = 0; i < 5; i++) baseCards.push({ type: 'task', name: '📜 ภารกิจ', desc: 'สั่งให้อีกฝ่ายทำตามใจชอบ!' });
-  baseCards.push({ type: 'attack', name: '🐉 โครโน่เจ็ท ดราก้อน', desc: 'บังคับอีกฝ่ายเล่น 2 ตา!' });
-
+  for (let i = 0; i < 5; i++) baseCards.push({ type: 'task', name: '📜 ภารกิจ', desc: 'สั่งให้อีกฝ่ายทำ!' });
   baseCards = shuffleArray(baseCards);
 
-  // แจกไพ่ให้ผู้เล่น 2 คน คนละ 4 ใบ
   let p1Hand = baseCards.splice(0, 4);
   let p2Hand = baseCards.splice(0, 4);
-
-  // ยัดการ์ดป้องกันให้คนละ 1 ใบ
   p1Hand.push({ type: 'defuse', name: '🛡️ การ์ดง้อ' });
   p2Hand.push({ type: 'defuse', name: '🛡️ การ์ดง้อ' });
 
-  // ใส่ระเบิด 1 การ์ดง้อ 1 ลงกองกลางแล้วสับใหม่
   baseCards.push({ type: 'defuse', name: '🛡️ การ์ดง้อ' });
-  baseCards.push({ type: 'bomb', name: '💣 ระเบิดความงอน' });
-  baseCards = shuffleArray(baseCards);
-
-  // กำหนดว่าใครเริ่มก่อน (0 หรือ 1)
-  const firstTurnIndex = Math.random() > 0.5 ? 0 : 1;
-
-  rooms[roomId] = {
-    ...rooms[roomId],
-    deck: baseCards,
-    hands: {
-      [rooms[roomId].players[0].id]: shuffleArray(p1Hand),
-      [rooms[roomId].players[1].id]: shuffleArray(p2Hand)
-    },
-    turnIndex: firstTurnIndex,
-    turnsToTake: 1,
-    gameOver: false,
-    message: `เกมเริ่มแล้ว! ตาของ ${rooms[roomId].players[firstTurnIndex].name}`
-  };
+  baseCards.push({ type: 'bomb', name: '💣 ระเบิด' });
+  
+  rooms[roomId].deck = shuffleArray(baseCards);
+  rooms[roomId].hands = { [rooms[roomId].players[0].id]: shuffleArray(p1Hand), [rooms[roomId].players[1].id]: shuffleArray(p2Hand) };
+  rooms[roomId].turnIndex = Math.random() > 0.5 ? 0 : 1;
+  rooms[roomId].turnsToTake = 1;
+  rooms[roomId].gameOver = false;
+  rooms[roomId].message = `เริ่มเกมดงระเบิด! ตาของ ${rooms[roomId].players[rooms[roomId].turnIndex].name}`;
 };
 
-// ฟังก์ชันส่งข้อมูลให้ผู้เล่นแต่ละคน (ซ่อนไพ่คู่แข่ง)
+// --- ลอจิกเกม UNO (มินิ) ---
+const setupUnoGame = (roomId) => {
+  const colors = ['red', 'blue', 'green', 'yellow'];
+  let deck = [];
+  // สร้างไพ่สีละ 1-9 อย่างละ 2 ใบ
+  colors.forEach(color => {
+    for(let i=1; i<=9; i++) {
+      deck.push({ type: 'uno', color: color, value: i, name: `${i}` });
+      deck.push({ type: 'uno', color: color, value: i, name: `${i}` });
+    }
+  });
+  deck = shuffleArray(deck);
+
+  let p1Hand = deck.splice(0, 7); // แจกคนละ 7 ใบ
+  let p2Hand = deck.splice(0, 7);
+  let topCard = deck.shift(); // เปิดไพ่ใบแรกตรงกลาง
+
+  rooms[roomId].deck = deck;
+  rooms[roomId].topCard = topCard;
+  rooms[roomId].hands = { [rooms[roomId].players[0].id]: p1Hand, [rooms[roomId].players[1].id]: p2Hand };
+  rooms[roomId].turnIndex = Math.random() > 0.5 ? 0 : 1;
+  rooms[roomId].turnsToTake = 1;
+  rooms[roomId].gameOver = false;
+  rooms[roomId].message = `เริ่มเกม UNO! ตาของ ${rooms[roomId].players[rooms[roomId].turnIndex].name}`;
+};
+
+// ส่ง State ให้ผู้เล่น
 const sendGameState = (roomId) => {
   const room = rooms[roomId];
   if (!room) return;
-
   room.players.forEach((player, index) => {
     const opponent = room.players[index === 0 ? 1 : 0];
-    const myHand = room.hands[player.id] || [];
-    const opponentHandCount = room.hands[opponent.id] ? room.hands[opponent.id].length : 0;
-    const activePlayer = room.players[room.turnIndex];
-
     io.to(player.id).emit('gameState', {
       players: room.players,
+      gameType: room.gameType,
       deckCount: room.deck.length,
-      myHand: myHand,
-      opponentHandCount: opponentHandCount,
-      turnId: activePlayer.id,
-      turnName: activePlayer.name,
+      topCard: room.topCard, // สำหรับ UNO
+      myHand: room.hands[player.id] || [],
+      opponentHandCount: room.hands[opponent.id] ? room.hands[opponent.id].length : 0,
+      turnId: room.players[room.turnIndex].id,
+      turnName: room.players[room.turnIndex].name,
       turnsToTake: room.turnsToTake,
       message: room.message,
       gameOver: room.gameOver
@@ -91,44 +93,38 @@ const sendGameState = (roomId) => {
   });
 };
 
-// เมื่อมีคนเชื่อมต่อเข้ามา
 io.on('connection', (socket) => {
-  console.log('มีผู้เล่นเชื่อมต่อ:', socket.id);
-
-  // 1. รับคำสั่งเข้าห้อง
-  socket.on('joinRoom', ({ roomId, playerName }) => {
-    if (!rooms[roomId]) {
-      rooms[roomId] = { players: [], gameStarted: false };
-    }
-
+  socket.on('joinRoom', ({ roomId, playerName, gameType }) => {
+    if (!rooms[roomId]) rooms[roomId] = { players: [], gameStarted: false, gameType: gameType };
     const room = rooms[roomId];
     
-    // ถ้าห้องเต็ม (มี 2 คนแล้ว)
-    if (room.players.length >= 2 && !room.players.find(p => p.id === socket.id)) {
-      socket.emit('error', 'ห้องนี้เต็มแล้วครับ!');
-      return;
-    }
+    // อัปเดตประเภทเกมหากคนแรกสร้างไว้
+    if (room.players.length === 0) room.gameType = gameType;
 
-    // เอาผู้เล่นเข้าห้อง
     socket.join(roomId);
     if (!room.players.find(p => p.id === socket.id)) {
       room.players.push({ id: socket.id, name: playerName });
     }
+    io.to(roomId).emit('roomStatus', { message: `${playerName} เข้าห้องมาแล้ว!` });
 
-    io.to(roomId).emit('roomStatus', { 
-      players: room.players, 
-      message: `${playerName} เข้าห้องมาแล้ว! รออีกฝ่าย...`
-    });
-
-    // ถ้าคนครบ 2 คน เริ่มเกมเลย!
-    if (room.players.length === 2 && !room.gameStarted) {
+    if (room.players.length === 2) {
       room.gameStarted = true;
-      setupGame(roomId);
+      if(room.gameType === 'uno') setupUnoGame(roomId);
+      else setupBombGame(roomId);
       sendGameState(roomId);
     }
   });
 
-  // 2. รับคำสั่งจั่วไพ่
+  // ระบบปุ่ม "เริ่มเกมใหม่"
+  socket.on('restartGame', (roomId) => {
+    const room = rooms[roomId];
+    if (room && room.players.length === 2) {
+      if(room.gameType === 'uno') setupUnoGame(roomId);
+      else setupBombGame(roomId);
+      sendGameState(roomId);
+    }
+  });
+
   socket.on('drawCard', (roomId) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players[room.turnIndex].id !== socket.id) return;
@@ -137,85 +133,82 @@ io.on('connection', (socket) => {
     const myHand = room.hands[socket.id];
     const myName = room.players[room.turnIndex].name;
 
-    if (drawnCard.type === 'bomb') {
-      const defuseIndex = myHand.findIndex(c => c.type === 'defuse');
-      if (defuseIndex !== -1) {
-        myHand.splice(defuseIndex, 1); // หักการ์ดป้องกัน
-        const insertIndex = Math.floor(Math.random() * (room.deck.length + 1));
-        room.deck.splice(insertIndex, 0, drawnCard); // ยัดระเบิดกลับ
-        room.message = `หวิดไปแล้ว! ${myName} จั่วโดนระเบิด แต่ใช้การ์ดง้อป้องกันไว้ได้!`;
-        
-        // จบเทิร์น
-        if (room.turnsToTake <= 1) {
-          room.turnIndex = room.turnIndex === 0 ? 1 : 0;
-          room.turnsToTake = 1;
+    if (room.gameType === 'bomb') {
+      if (drawnCard.type === 'bomb') {
+        const defuseIndex = myHand.findIndex(c => c.type === 'defuse');
+        if (defuseIndex !== -1) {
+          myHand.splice(defuseIndex, 1);
+          room.deck.splice(Math.floor(Math.random() * room.deck.length), 0, drawnCard);
+          room.message = `หวิดไป! ${myName} ใช้การ์ดง้อกันระเบิด!`;
+          if (room.turnsToTake <= 1) { room.turnIndex = room.turnIndex === 0 ? 1 : 0; room.turnsToTake = 1; } 
+          else room.turnsToTake -= 1;
         } else {
-          room.turnsToTake -= 1;
+          room.gameOver = true;
+          room.message = `💥 ${myName} เหยียบระเบิด! แพ้แล้ว!`;
         }
       } else {
-        room.gameOver = true;
-        const winner = room.players[room.turnIndex === 0 ? 1 : 0].name;
-        room.message = `💥 บึ้มมม! ${myName} เหยียบระเบิด! (${winner} ชนะ!)`;
+        myHand.push(drawnCard);
+        if (room.turnsToTake <= 1) { room.turnIndex = room.turnIndex === 0 ? 1 : 0; room.turnsToTake = 1; } 
+        else room.turnsToTake -= 1;
       }
-    } else {
+    } else if (room.gameType === 'uno') {
       myHand.push(drawnCard);
-      room.message = `${myName} จั่วการ์ดไปแล้ว`;
-      if (room.turnsToTake <= 1) {
-        room.turnIndex = room.turnIndex === 0 ? 1 : 0;
-        room.turnsToTake = 1;
-      } else {
-        room.turnsToTake -= 1;
-      }
+      room.message = `${myName} จั่วไพ่แล้ว`;
+      room.turnIndex = room.turnIndex === 0 ? 1 : 0; // จั่วแล้วเปลี่ยนตา
     }
     
+    // รีสับกองไพ่ถ้าไพ่หมด (สำหรับ UNO)
+    if(room.deck.length === 0 && room.gameType === 'uno') {
+      room.deck = shuffleArray([{ type:'uno', color:'red', value:1 }]); // แจกปลอมๆ กันพัง
+    }
+
     sendGameState(roomId);
   });
 
-  // 3. รับคำสั่งใช้ไพ่ (Action)
   socket.on('playCard', ({ roomId, cardIndex }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players[room.turnIndex].id !== socket.id) return;
-
+    
     const myHand = room.hands[socket.id];
     const playedCard = myHand[cardIndex];
     const myName = room.players[room.turnIndex].name;
 
-    if (playedCard.type === 'defuse') return; // ห้ามกดใช้เอง
-
-    myHand.splice(cardIndex, 1); // ลบไพ่ออกจากมือ
-
-    if (playedCard.type === 'skip') {
-      room.message = `${myName} ใช้การ์ดชิ่งหนี!`;
-      if (room.turnsToTake <= 1) {
+    if (room.gameType === 'bomb') {
+      if (playedCard.type === 'defuse') return;
+      myHand.splice(cardIndex, 1);
+      
+      if (playedCard.type === 'skip') {
+        if (room.turnsToTake <= 1) { room.turnIndex = room.turnIndex === 0 ? 1 : 0; room.turnsToTake = 1; } 
+        else room.turnsToTake -= 1;
+      } else if (playedCard.type === 'attack') {
         room.turnIndex = room.turnIndex === 0 ? 1 : 0;
-        room.turnsToTake = 1;
-      } else {
-        room.turnsToTake -= 1;
+        room.turnsToTake = 2;
+      } else if (playedCard.type === 'task') {
+         io.to(roomId).emit('alert', `📜 ${myName} สั่งภารกิจ: ${playedCard.desc}`);
       }
-    } else if (playedCard.type === 'attack') {
-      room.message = `${myName} โจมตี! อีกฝ่ายโดนบังคับเล่น 2 ตาติด`;
-      room.turnIndex = room.turnIndex === 0 ? 1 : 0; // โยนให้อีกฝ่าย
-      room.turnsToTake = 2; // บังคับ 2 ตา
-    } else if (playedCard.type === 'see') {
-      const top3 = room.deck.slice(0, 3).map(c => c.name).join(', ');
-      // ส่งแอบดูไปให้คนกดใช้แค่คนเดียว
-      socket.emit('alert', `👁️ 3 ใบบนสุดคือ: ${top3 || 'ไม่มีการ์ด'}`);
-      room.message = `${myName} แอบดูกองไพ่!`;
-    } else if (playedCard.type === 'task') {
-      io.to(roomId).emit('alert', `📜 ${myName} ใช้การ์ดภารกิจ: ${playedCard.desc}`);
-      room.message = `${myName} โยนภารกิจให้อีกฝ่าย!`;
+    } 
+    else if (room.gameType === 'uno') {
+      const top = room.topCard;
+      // ลอจิก UNO: สีเหมือนกัน หรือ เลขเหมือนกัน ถึงจะลงได้
+      if (playedCard.color === top.color || playedCard.value === top.value) {
+        room.topCard = playedCard; // เปลี่ยนไพ่กองกลาง
+        myHand.splice(cardIndex, 1); // เอาไพ่ออกจากมือ
+        
+        if (myHand.length === 0) {
+          room.gameOver = true;
+          room.message = `🎉 ${myName} ไพ่หมดมือ! ชนะแล้ว!`;
+        } else {
+          room.message = `${myName} ลงไพ่ ${playedCard.color} ${playedCard.value}`;
+          room.turnIndex = room.turnIndex === 0 ? 1 : 0; // เปลี่ยนตา
+        }
+      } else {
+         socket.emit('alert', 'ลงไม่ได้! สีหรือตัวเลขไม่ตรงกับกองกลาง');
+         return; // หยุดการทำงาน ไม่ส่ง state
+      }
     }
 
     sendGameState(roomId);
   });
-
-  socket.on('disconnect', () => {
-    console.log('ผู้เล่นออก:', socket.id);
-    // ในโปรเจกต์จริง ต้องมีการจัดการลบคนออกจากห้องเมื่อเน็ตหลุด
-  });
 });
 
-const PORT = 3001;
-server.listen(PORT, () => {
-  console.log(`Backend วิ่งอยู่ที่ http://localhost:${PORT}`);
-});
+server.listen(3001, () => console.log('Backend running on http://localhost:3001'));
