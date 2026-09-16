@@ -209,6 +209,30 @@ io.on('connection', (socket) => {
 
     sendGameState(roomId);
   });
+
+  // *** ส่วนที่เพิ่มเข้ามาใหม่: ทำลายห้องเมื่อคนออก ***
+  socket.on('disconnect', () => {
+    console.log('ผู้เล่นออก/ปิดเว็บ:', socket.id);
+    for (const roomId in rooms) {
+      const room = rooms[roomId];
+      const playerIndex = room.players.findIndex(p => p.id === socket.id);
+      
+      if (playerIndex !== -1) {
+        // เอาคนนั้นออกจากห้อง
+        room.players.splice(playerIndex, 1);
+        
+        // บอกอีกคนที่เหลืออยู่ว่าคู่แข่งหนีไปแล้ว
+        io.to(roomId).emit('error', 'อีกฝ่ายออกจากห้องไปแล้ว (กรุณารีเฟรชเพื่อเข้าใหม่)');
+        
+        // ถ้าห้องว่าง (ไม่มีใครเหลือเลย) ให้ระเบิดห้องทิ้ง!
+        if (room.players.length === 0) {
+          delete rooms[roomId];
+          console.log(`ทำลายห้อง ${roomId} ทิ้งแล้ว สามารถใช้รหัสเดิมได้อีกครั้ง`);
+        }
+      }
+    }
+  });
+
 });
 
-server.listen(3001, () => console.log('Backend running on http://localhost:3001'));
+server.listen(3001, () => console.log('Backend running on port 3001'));
